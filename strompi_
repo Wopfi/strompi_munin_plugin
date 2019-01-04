@@ -1,0 +1,168 @@
+#!/usr/bin/python
+
+#%# capabilities=suggest
+#%# capabilities=autoconf
+#%# family=auto
+
+import serial
+import sys, getopt
+from time import sleep
+import os.path
+import re
+
+wide_range_volt_min = 4.8
+battery_volt_min = 0.5
+mUSB_volt_min = 4.1
+
+strompi_port = '/dev/serial0'
+
+def readData():
+  serial_port = serial.Serial()
+
+  serial_port.baudrate = 38400
+  serial_port.port = strompi_port
+  serial_port.timeout = 1
+  serial_port.bytesize = 8
+  serial_port.stopbits = 1
+  serial_port.parity = serial.PARITY_NONE
+
+  if serial_port.isOpen(): serial_port.close()
+  serial_port.open()
+
+  try:
+    serial_port.write(str.encode("quit"))
+    sleep(0.1)
+    serial_port.write(str.encode("\x0D"))
+    sleep(0.1)
+
+    serial_port.write('status-rpi')
+    sleep(0.1)
+    serial_port.write('\x0D')
+
+    sp3_time = serial_port.readline(9999);
+    sp3_date = serial_port.readline(9999);
+    sp3_weekday = serial_port.readline(9999);
+    sp3_modus = serial_port.readline(9999);
+    sp3_alarm_enable = serial_port.readline(9999);
+    sp3_alarm_mode = serial_port.readline(9999);
+    sp3_alarm_hour = serial_port.readline(9999);
+    sp3_alarm_min = serial_port.readline(9999);
+    sp3_alarm_day = serial_port.readline(9999);
+    sp3_alarm_month = serial_port.readline(9999);
+    sp3_alarm_weekday = serial_port.readline(9999);
+    sp3_alarmPoweroff = serial_port.readline(9999);
+    sp3_alarm_hour_off = serial_port.readline(9999);
+    sp3_alarm_min_off = serial_port.readline(9999);
+    sp3_shutdown_enable = serial_port.readline(9999);
+    sp3_shutdown_time = serial_port.readline(9999);
+    sp3_warning_enable = serial_port.readline(9999);
+    sp3_serialLessMode = serial_port.readline(9999);
+    sp3_batLevel_shutdown = serial_port.readline(9999);
+    sp3_batLevel = int(serial_port.readline(9999));
+    sp3_charging = serial_port.readline(9999);
+    sp3_ADC_Wide = float(serial_port.readline(9999))/1000;
+    sp3_ADC_BAT = float(serial_port.readline(9999))/1000;
+    sp3_ADC_USB = float(serial_port.readline(9999))/1000;
+    sp3_ADC_OUTPUT = float(serial_port.readline(9999))/1000;
+    sp3_firmwareVersion = serial_port.readline(9999);
+
+  except:
+    print "An error has occured"
+    sys.exit()
+
+  serial_port.close()
+
+  if sp3_ADC_Wide < wide_range_volt_min:
+    sp3_ADC_Wide = 0.0
+
+  if sp3_ADC_BAT < battery_volt_min:
+    sp3_ADC_BAT = 0.0
+
+  if sp3_ADC_USB < mUSB_volt_min:
+    sp3_ADC_USB  = 0.0
+
+  # Translate Battery Level Index into Percent
+  level_translator = { 1: 10, 2: 25, 3: 50, 4: 100 }
+  level_prz = level_translator.get( sp3_batLevel, 0 )
+
+  # Combine different voltages into one array
+  voltages = [ sp3_ADC_BAT, sp3_ADC_USB, sp3_ADC_Wide, sp3_ADC_OUTPUT ]
+
+  return level_prz, sp3_charging, voltages
+
+
+def main(argv):
+
+  # get the full name of the calling script
+  file = re.search( ".*_(.*)", sys.argv[0] )
+
+  if file:
+    value_group = file.group(1)
+
+  for opt in argv:
+    # output the configuration data
+    if opt == 'config':
+
+      if value_group == 'voltages':
+        print "graph_category sensors"
+        print "graph_title StromPi 3 Voltages"
+        print "graph_vlabel V"
+        print "battery_voltage.label Battery Voltage"
+        print "usb_voltage.label USB Voltage"
+        print "wide_voltage.label Wide Input Voltage"
+        print "out_voltage.label Output Voltage"
+
+      elif value_group == 'battery':
+        print "graph_category sensors"
+        print "graph_title StromPi 3 Battery Capacity"
+        print "graph_vlabel %"
+        print "graph_args -l 0"
+        print "graph_scale no"
+        print "battery_capacity.warning 20:"
+        print "battery_capacity.draw AREA"
+        print "battery_capacity.label Battery Capacity"
+
+      sys.exit()
+
+    # output the suggestions for symlink names
+    elif opt == 'suggest':
+      print "voltages"
+      print "battery"
+      sys.exit()
+
+    # autoconf information
+    elif opt == 'autoconf':
+      if os.path.exists(strompi_port):
+        print "yes"
+      else:
+        print "no ( " + strompi_port + " not found )"
+      sys.exit()
+
+  batlvl,chrg,voltages = readData()
+
+  # otherwise output the data depending on the script symlink name
+  if value_group == 'battery':
+    print "battery_capacity.value " + str(batlvl)
+
+  elif value_group == 'voltages':
+    print "battery_voltage.value "+ str(voltages[0])
+    print "usb_voltage.value " + str(voltages[1])
+    print "wide_voltage.value " + str(voltages[2])
+    print "out_voltage.value "+ str(voltages[3])
+
+  else:
+    # Debug only output
+    print "Bat: " + str(voltages[0]) + "V"
+    print "USB: " + str(voltages[1]) + "V"
+    print "Wide: " + str(voltages[2]) + "V"
+    print "Out: " + str(voltages[3]) + "V"
+    print ""
+    if chrg:
+      print "Bat Level: " + str(batlvl) + "% [charging]"
+    else:
+      print "Bat Level: " + str(batlvl) + "%"
+
+  sys.exit()
+
+if __name__ == "__main__":
+   main(sys.argv[1:])
